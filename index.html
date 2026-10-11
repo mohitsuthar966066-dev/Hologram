@@ -1,0 +1,336 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HoloModel Gesture Lab</title>
+<style>
+body{margin:0;background:#050914;color:#e5faff;font-family:Arial;text-align:center}
+header{padding:15px;background:#0c1b30;color:#35eaff}
+#status{padding:12px;color:#7fffd4;font-size:14px}
+#view{display:block;width:100%;height:48vh;min-height:280px;touch-action:none}
+button{background:#102942;color:#52eaff;border:1px solid #168ab5;border-radius:10px;padding:12px;margin:5px;font-size:15px}
+button:active{background:#17628a}
+#gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:10px}
+#camera{width:150px;max-width:40%;border-radius:10px;transform:scaleX(-1)}
+#help{padding:12px;color:#aac7df;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+<h2>HOLOMODEL 3D LAB</h2>
+Hand Gesture Controlled Viewer
+</header>
+
+<div id="status">Loading 3D engine...</div>
+<canvas id="view"></canvas>
+
+<button id="start">📷 Start Hand Tracking</button>
+<button id="reset">Reset View</button>
+<button id="auto">Toggle Auto Rotate</button>
+
+<div id="help">
+Move your hand left/right = Rotate model<br>
+Move thumb and index finger apart/closer = Zoom<br>
+You can also drag the model with your finger.
+</div>
+
+<video id="camera" autoplay playsinline muted hidden></video>
+
+<div id="gallery">
+<button data-model="reactor">⚡ Arc Reactor</button>
+<button data-model="earth">🌍 Earth</button>
+<button data-model="solar">🪐 Solar System</button>
+<button data-model="atom">⚛ Atom</button>
+<button data-model="heart">❤️ Heart</button>
+<button data-model="crystal">💎 Crystal</button>
+</div>
+
+<script type="module">
+const status=document.querySelector('#status');
+const video=document.querySelector('#camera');
+const canvas=document.querySelector('#view');
+
+let scene, camera, renderer, group, THREE;
+let autoRotate=true, handTracker=null, stream=null;
+let previousHand=null, previousPinch=null, lastVideoTime=-1;
+
+const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+
+try {
+  THREE=await import(
+    'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js'
+  );
+
+  scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x050914);
+
+  camera=new THREE.PerspectiveCamera(
+    45,innerWidth/(canvas.clientHeight||300),0.1,100
+  );
+  camera.position.z=7;
+
+  renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+
+  scene.add(new THREE.AmbientLight(0xffffff,1.8));
+  const light=new THREE.PointLight(0x21cfff,35);
+  light.position.set(3,4,5);
+  scene.add(light);
+
+  group=new THREE.Group();
+  scene.add(group);
+
+  function mat(color){
+    return new THREE.MeshStandardMaterial({
+      color,metalness:.5,roughness:.3,
+      emissive:color,emissiveIntensity:.3
+    });
+  }
+
+  function sphere(r,color,x=0,y=0,z=0){
+    const m=new THREE.Mesh(
+      new THREE.SphereGeometry(r,32,24),mat(color)
+    );
+    m.position.set(x,y,z);
+    group.add(m);
+  }
+
+  function ring(r,t,color){
+    group.add(new THREE.Mesh(
+      new THREE.TorusGeometry(r,t,12,80),mat(color)
+    ));
+  }
+
+  function clear(){
+    group.traverse(o=>{
+      if(o.geometry)o.geometry.dispose();
+      if(o.material){
+        if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());
+        else o.material.dispose();
+      }
+    });
+    group.clear();
+  }
+
+  function model(name){
+    clear();
+
+    if(name==='reactor'){
+      ring(1.4,.09,0x168cff);
+      ring(1.05,.07,0x31f4ff);
+      ring(.7,.07,0x168cff);
+      ring(.35,.08,0xffffff);
+      sphere(.22,0x31ffff);
+    }
+
+    if(name==='earth'){
+      sphere(1.35,0x1675ee);
+      for(let i=0;i<5;i++){
+        const m=new THREE.Mesh(
+          new THREE.TorusGeometry(1.36,.035,8,80),
+          mat(0x42eaff)
+        );
+        m.rotation.x=i*.55;
+        group.add(m);
+      }
+    }
+
+    if(name==='solar'){
+      sphere(.4,0xffa52f);
+      [1,1.6,2.2].forEach((r,i)=>{
+        ring(r,.015,0x328cff);
+        sphere(.12, [0x52ddff,0xffb56a,0x8aabff][i],r,0,0);
+      });
+    }
+
+    if(name==='atom'){
+      sphere(.28,0xff4278);
+      for(let i=0;i<3;i++){
+        const m=new THREE.Mesh(
+          new THREE.TorusGeometry(1.2,.035,8,80),
+          mat(0x31eaff)
+        );
+        m.rotation.x=i*1.05;
+        m.rotation.y=i*.9;
+        group.add(m);
+      }
+    }
+
+    if(name==='heart'){
+      sphere(.6,0xff315b,-.32,.25);
+      sphere(.6,0xff315b,.32,.25);
+      const m=new THREE.Mesh(
+        new THREE.ConeGeometry(.8,1.2,32),mat(0xff315b)
+      );
+      m.position.y=-.45;
+      m.rotation.z=Math.PI;
+      group.add(m);
+    }
+
+    if(name==='crystal'){
+      const g=new THREE.OctahedronGeometry(1.4);
+      group.add(new THREE.Mesh(g,mat(0x32dcff)));
+      group.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(g),
+        new THREE.LineBasicMaterial({color:0xffffff})
+      ));
+    }
+
+    group.rotation.set(.2,.3,0);
+    status.textContent='3D ready: '+name;
+  }
+
+  function resize(){
+    const h=canvas.clientHeight||300;
+    renderer.setSize(canvas.clientWidth||innerWidth,h);
+    camera.aspect=(canvas.clientWidth||innerWidth)/h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize',resize);
+  resize();
+  model('reactor');
+
+  document.querySelectorAll('[data-model]').forEach(b=>{
+    b.onclick=()=>model(b.dataset.model);
+  });
+
+  document.querySelector('#reset').onclick=()=>{
+    group.rotation.set(.2,.3,0);
+    camera.position.z=7;
+  };
+
+  document.querySelector('#auto').onclick=()=>{
+    autoRotate=!autoRotate;
+  };
+
+  // Touch drag and two-finger pinch zoom
+  let drag=false,lastX=0,lastY=0,lastDist=0;
+
+  canvas.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='touch' &&
+       e.buttons===1 && !drag){
+      drag=true;lastX=e.clientX;lastY=e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    }
+  });
+
+  canvas.addEventListener('pointermove',e=>{
+    if(!drag)return;
+    group.rotation.y+=(e.clientX-lastX)*.01;
+    group.rotation.x+=(e.clientY-lastY)*.01;
+    lastX=e.clientX;lastY=e.clientY;
+  });
+
+  canvas.addEventListener('pointerup',()=>drag=false);
+  canvas.addEventListener('pointercancel',()=>drag=false);
+
+  canvas.addEventListener('wheel',e=>{
+    e.preventDefault();
+    camera.position.z=clamp(camera.position.z+e.deltaY*.01,3,12);
+  },{passive:false});
+
+  // Camera and hand tracking
+  document.querySelector('#start').onclick=async()=>{
+    const btn=document.querySelector('#start');
+    btn.disabled=true;
+    status.textContent='Starting camera...';
+
+    try{
+      if(!navigator.mediaDevices?.getUserMedia)
+        throw Error('Camera requires HTTPS and browser permission.');
+
+      const mp=await import(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs'
+      );
+
+      const vision=await mp.FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+      );
+
+      handTracker=await mp.HandLandmarker.createFromOptions(vision,{
+        baseOptions:{
+          modelAssetPath:
+          'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+        },
+        runningMode:'VIDEO',
+        numHands:1
+      });
+
+      stream=await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video:{facingMode:'user',width:640,height:480}
+      });
+
+      video.srcObject=stream;
+      video.hidden=false;
+      await video.play();
+
+      status.textContent='Hand tracking active! Show your hand.';
+      track();
+    }catch(err){
+      console.error(err);
+      status.textContent='Camera/tracking error: '+err.message+
+        ' — Allow camera permission and reload.';
+      btn.disabled=false;
+    }
+  };
+
+  function track(){
+    if(!handTracker)return;
+
+    if(video.readyState>=2 && video.currentTime!==lastVideoTime){
+      lastVideoTime=video.currentTime;
+      const result=handTracker.detectForVideo(video,performance.now());
+
+      if(result.landmarks?.length){
+        const p=result.landmarks[8]; // index fingertip
+        const t=result.landmarks[4]; // thumb tip
+
+        if(previousHand){
+          group.rotation.y+=(previousHand.x-p.x)*4;
+          group.rotation.x+=(p.y-previousHand.y)*4;
+        }
+        previousHand={x:p.x,y:p.y};
+
+        const d=Math.hypot(p.x-t.x,p.y-t.y);
+
+        // Zoom responds to finger spacing
+        if(d<.25){
+          if(previousPinch!==null){
+            camera.position.z=clamp(
+              camera.position.z+(previousPinch-d)*18,3,12
+            );
+          }
+          previousPinch=d;
+        }else{
+          previousPinch=null;
+        }
+
+        status.textContent='Hand detected • Rotate and pinch to zoom';
+      }else{
+        previousHand=null;
+        previousPinch=null;
+        status.textContent='Show one hand clearly to the camera.';
+      }
+    }
+    requestAnimationFrame(track);
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+    if(autoRotate && !previousHand)group.rotation.y+=.003;
+    renderer.render(scene,camera);
+  }
+  animate();
+
+}catch(err){
+  console.error(err);
+  status.textContent='3D engine failed: '+err.message+
+    '. Check internet and reload.';
+}
+</script>
+</body>
+  </html>
+  
